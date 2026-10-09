@@ -104,3 +104,10 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+My project/UserSettings/EditorUserSettings.asset
+My project/UserSettings/Search.index
+My project/UserSettings/Search.settings
+My project/UserSettings/Layouts/CurrentMaximizeLayout.dwlt
+My project/UserSettings/Layouts/default-6000.dwlt
+My project/Temp/
+My project/Library/
