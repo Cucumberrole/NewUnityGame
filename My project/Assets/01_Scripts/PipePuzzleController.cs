@@ -9,59 +9,99 @@ using UnityEngine.InputSystem;
 public class PipePuzzleController : MonoBehaviour
 {
     [Header("カメラ設定")]
-    [SerializeField] private Camera mainCamera;
+    [SerializeField] private Camera _mainCamera;
 
     [Header("回転設定")]
-    [SerializeField] private float rotationDuration = 0.25f;
+    [SerializeField] private float _rotationDuration = 0.25f;
 
     [Header("植物の成長設定")]
-    [SerializeField, Min(1)] private int growthPerRotation = 10;
-    [SerializeField] private GameObject[] plantStages = new GameObject[4];
+    [SerializeField, Min(1)] private int _growthPerRotation = 10;
+    [SerializeField] private GameObject[] _plantStages = new GameObject[4];
+
+    [Header("進捗バー点滅設定")]
+    [Tooltip("成長度90%以上で点滅する速さ")]
+    [SerializeField, Min(0f)] private float _blinkSpeed = 3f;
+
+    [Tooltip("点滅時に最も暗くなる透明度")]
+    [SerializeField, Range(0f, 1f)] private float _blinkMinAlpha = 0.3f;
+
+    [Header("最大成長演出設定")]
+    [Tooltip("カメラが揺れる時間")]
+    [SerializeField, Min(0.1f)] private float _cameraShakeDuration = 1.2f;
+
+    [Tooltip("カメラの揺れの強さ")]
+    [SerializeField, Min(0f)] private float _cameraShakeStrength = 0.25f;
+
+    [Tooltip("植物が巨大化する時間")]
+    [SerializeField, Min(0.1f)] private float _plantScaleDuration = 3f;
+
+    [Tooltip("植物の最終的な大きさ")]
+    [SerializeField, Min(1f)] private float _plantScaleMultiplier = 2.5f;
 
     [Header("通水演出設定")]
     [Tooltip("クリア判定が出たときに水を流すか")]
-    [SerializeField] private bool playFlowOnClear = true;
+    [SerializeField] private bool _playFlowOnClear = true;
 
     [Tooltip("水が進む速さ（1秒あたりに進む距離。1タイル=1の想定）")]
-    [SerializeField, Min(0.05f)] private float waterFlowSpeed = 4f;
+    [SerializeField, Min(0.05f)] private float _waterFlowSpeed = 4f;
 
     [Tooltip("ゴール到達後に水を残す時間")]
-    [SerializeField, Min(0f)] private float waterFlowHold = 0.15f;
+    [SerializeField, Min(0f)] private float _waterFlowHold = 0.15f;
 
     [Tooltip("水流ラインの太さ")]
-    [SerializeField, Min(0f)] private float waterLineWidth = 0.12f;
+    [SerializeField, Min(0f)] private float _waterLineWidth = 0.12f;
 
     [Tooltip("水の先頭（水滴）の大きさ")]
-    [SerializeField, Min(0f)] private float waterHeadSize = 0.18f;
-    [SerializeField] private Color waterColor = new Color(0.25f, 0.8f, 1f, 1f);
-    [SerializeField] private Color waterEmissionColor = new Color(0.2f, 0.7f, 1f, 1f);
-    [SerializeField, Min(0f)] private float waterEmissionIntensity = 2f;
+    [SerializeField, Min(0f)] private float _waterHeadSize = 0.18f;
+
+    [SerializeField] private Color _waterColor = new Color(0.25f, 0.8f, 1f, 1f);
+    [SerializeField] private Color _waterEmissionColor = new Color(0.2f, 0.7f, 1f, 1f);
+    [SerializeField, Min(0f)] private float _waterEmissionIntensity = 2f;
 
     [Tooltip("水が満ちたタイルを水色に寄せる強さ（0で色は変えない）")]
-    [SerializeField, Range(0f, 1f)] private float waterTint = 0.6f;
+    [SerializeField, Range(0f, 1f)] private float _waterTint = 0.6f;
 
-    private bool isRotating = false;
-    private bool isClear = false;
-    private bool boardReady = false;
-    private bool isFlowing = false;
-    private int rotationCount = 0;
-    private int plantGrowth = 0;
+    private bool _isRotating = false;
+    private bool _isClear = false;
+    private bool _boardReady = false;
+    private bool _isFlowing = false;
+    private bool _hasPlayedMaxGrowthEffect = false;
+
+    private int _rotationCount = 0;
+    private int _plantGrowth = 0;
+
+    private float _blinkAlpha = 1f;
+    private Vector3 _cameraInitialLocalPosition;
+    private Vector3 _plantInitialLocalScale;
+
     private const int GridSize = 3;
 
-    private enum PipeType { Straight, Corner }
+    private enum PipeType
+    {
+        Straight,
+        Corner
+    }
 
     [System.Flags]
-    private enum Direction { None = 0, North = 1, East = 2, South = 4, West = 8 }
+    private enum Direction
+    {
+        None = 0,
+        North = 1,
+        East = 2,
+        South = 4,
+        West = 8
+    }
 
-    private readonly Transform[,] tiles = new Transform[GridSize, GridSize];
-    private readonly PipeType[,] pipeTypes = new PipeType[GridSize, GridSize];
+    private readonly Transform[,] _tiles = new Transform[GridSize, GridSize];
+    private readonly PipeType[,] _pipeTypes = new PipeType[GridSize, GridSize];
 
-    // ---- 通水演出用のキャッシュ ----
-    private List<Renderer>[,] tileRenderers;
-    private List<Color>[,] tileBaseColors;
-    private MaterialPropertyBlock propertyBlock;
-    private GameObject waterHead;
-    private LineRenderer waterLine;
+    // 通水演出用のキャッシュ
+    private List<Renderer>[,] _tileRenderers;
+    private List<Color>[,] _tileBaseColors;
+    private MaterialPropertyBlock _propertyBlock;
+
+    private GameObject _waterHead;
+    private LineRenderer _waterLine;
 
     private static readonly int FillId = Shader.PropertyToID("_Fill");
     private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
@@ -71,13 +111,26 @@ public class PipePuzzleController : MonoBehaviour
     // ゲーム開始時
     private void Start()
     {
-        if (mainCamera == null) mainCamera = Camera.main;
+        if (_mainCamera == null)
+        {
+            _mainCamera = Camera.main;
+        }
 
-        // 植物を初期状態にする
+        if (_mainCamera != null)
+        {
+            _cameraInitialLocalPosition = _mainCamera.transform.localPosition;
+        }
+
+        if (_plantStages != null && _plantStages.Length > 3 && _plantStages[3] != null)
+        {
+            _plantInitialLocalScale = _plantStages[3].transform.localScale;
+        }
+
         UpdatePlantVisual();
 
-        boardReady = LoadTiles();
-        if (boardReady)
+        _boardReady = LoadTiles();
+
+        if (_boardReady)
         {
             CacheTileRenderers();
             CheckPuzzleClear();
@@ -100,21 +153,45 @@ public class PipePuzzleController : MonoBehaviour
                     return false;
                 }
 
-                tiles[row, col] = tile;
-                bool straight = false, horizontal = false, vertical = false;
+                _tiles[row, col] = tile;
+
+                bool straight = false;
+                bool horizontal = false;
+                bool vertical = false;
 
                 foreach (Transform child in tile.GetComponentsInChildren<Transform>(true))
                 {
-                    if (child == tile) continue;
+                    if (child == tile)
+                    {
+                        continue;
+                    }
 
-                    string name = child.name.Trim();
-                    if (name.StartsWith("Pipe_Straight")) straight = true;
-                    if (name.StartsWith("Pipe_Horizontal")) horizontal = true;
-                    if (name.StartsWith("Pipe_Vertical") || name.StartsWith("Pipe_Vartical")) vertical = true;
+                    string childName = child.name.Trim();
+
+                    if (childName.StartsWith("Pipe_Straight"))
+                    {
+                        straight = true;
+                    }
+
+                    if (childName.StartsWith("Pipe_Horizontal"))
+                    {
+                        horizontal = true;
+                    }
+
+                    if (childName.StartsWith("Pipe_Vertical") || childName.StartsWith("Pipe_Vartical"))
+                    {
+                        vertical = true;
+                    }
                 }
 
-                if (horizontal && vertical && !straight) pipeTypes[row, col] = PipeType.Corner;
-                else if (straight && !horizontal && !vertical) pipeTypes[row, col] = PipeType.Straight;
+                if (horizontal && vertical && !straight)
+                {
+                    _pipeTypes[row, col] = PipeType.Corner;
+                }
+                else if (straight && !horizontal && !vertical)
+                {
+                    _pipeTypes[row, col] = PipeType.Straight;
+                }
                 else
                 {
                     Debug.LogError($"{tileName} のパイプが不明です！");
@@ -130,20 +207,49 @@ public class PipePuzzleController : MonoBehaviour
     // 毎フレームの処理
     private void Update()
     {
-        if (!boardReady || isClear || isRotating || isFlowing || mainCamera == null) return;
-        if (!GetMouseClick(out Vector2 mousePosition)) return;
+        UpdateBlinkEffect();
 
-        Ray ray = mainCamera.ScreenPointToRay(mousePosition);
+        if (!_boardReady || _isClear || _isRotating || _isFlowing || _mainCamera == null)
+        {
+            return;
+        }
+
+        if (!GetMouseClick(out Vector2 mousePosition))
+        {
+            return;
+        }
+
+        Ray ray = _mainCamera.ScreenPointToRay(mousePosition);
 
         if (Physics.Raycast(ray, out RaycastHit hit))
         {
             Transform clickedObject = hit.collider.transform;
 
             while (clickedObject != null && clickedObject.parent != transform)
+            {
                 clickedObject = clickedObject.parent;
+            }
 
-            if (clickedObject == null || !clickedObject.name.StartsWith("Tile_R")) return;
+            if (clickedObject == null || !clickedObject.name.StartsWith("Tile_R"))
+            {
+                return;
+            }
+
             StartCoroutine(RotateTile(clickedObject));
+        }
+    }
+
+    // 進捗バーの点滅処理
+    private void UpdateBlinkEffect()
+    {
+        if (_plantGrowth >= 90)
+        {
+            float blinkValue = (Mathf.Sin(Time.time * _blinkSpeed) + 1f) / 2f;
+            _blinkAlpha = Mathf.Lerp(_blinkMinAlpha, 1f, blinkValue);
+        }
+        else
+        {
+            _blinkAlpha = 1f;
         }
     }
 
@@ -164,6 +270,7 @@ public class PipePuzzleController : MonoBehaviour
             return true;
         }
 #endif
+
         mousePosition = Vector2.zero;
         return false;
     }
@@ -171,82 +278,171 @@ public class PipePuzzleController : MonoBehaviour
     // タイルを回転させる
     private IEnumerator RotateTile(Transform tile)
     {
-        isRotating = true;
+        _isRotating = true;
 
-        // 回し始めたら水は引く
         ClearFlowVisual();
 
         Quaternion startRotation = tile.localRotation;
         Quaternion targetRotation = Quaternion.Euler(tile.localEulerAngles + new Vector3(0f, 90f, 0f));
+
         float elapsedTime = 0f;
-        float duration = Mathf.Max(0.01f, rotationDuration);
+        float duration = Mathf.Max(0.01f, _rotationDuration);
 
         while (elapsedTime < duration)
         {
             elapsedTime += Time.deltaTime;
+
             float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsedTime / duration));
+
             tile.localRotation = Quaternion.Slerp(startRotation, targetRotation, t);
+
             yield return null;
         }
 
         tile.localRotation = targetRotation;
-        rotationCount++;
+        _rotationCount++;
 
-        Debug.Log($"{tile.name} 回転終了 累計：{rotationCount}回");
+        Debug.Log($"{tile.name} 回転終了 累計：{_rotationCount}回");
 
-        // 回転するたびに植物を成長させる
         GrowPlant();
-
-        // 回転後にパズルの接続を確認
         CheckPuzzleClear();
-        isRotating = false;
-    }
 
-    // ========================================
-    // 植物の成長処理
-    // ========================================
+        _isRotating = false;
+    }
 
     private void GrowPlant()
     {
-        // 成長度を加算（最大100%）
-        plantGrowth = Mathf.Clamp(plantGrowth + growthPerRotation, 0, 100);
+        _plantGrowth = Mathf.Clamp(_plantGrowth + _growthPerRotation, 0, 100);
 
-        Debug.Log($"植物の成長度：{plantGrowth}%");
+        Debug.Log($"植物の成長度：{_plantGrowth}%");
 
-        // 成長度に応じて見た目を更新
         UpdatePlantVisual();
+
+        if (_plantGrowth >= 100 && !_hasPlayedMaxGrowthEffect)
+        {
+            _hasPlayedMaxGrowthEffect = true;
+            PlayMaxGrowthEffect();
+        }
+    }
+
+    private void PlayMaxGrowthEffect()
+    {
+        if (_mainCamera != null)
+        {
+            StartCoroutine(ShakeCamera());
+        }
+
+        if (_plantStages != null && _plantStages.Length > 3 && _plantStages[3] != null)
+        {
+            StartCoroutine(EnlargePlant());
+        }
+    }
+
+    private IEnumerator ShakeCamera()
+    {
+        if (_mainCamera == null)
+        {
+            yield break;
+        }
+
+        float elapsedTime = 0f;
+        float duration = Mathf.Max(0.1f, _cameraShakeDuration);
+
+        while (elapsedTime < duration)
+        {
+            elapsedTime += Time.deltaTime;
+
+            float progress = Mathf.Clamp01(elapsedTime / duration);
+            float strength = _cameraShakeStrength * (1f - progress);
+            Vector2 shakeOffset = Random.insideUnitCircle * strength;
+
+            _mainCamera.transform.localPosition = _cameraInitialLocalPosition
+                + new Vector3(shakeOffset.x, shakeOffset.y, 0f);
+
+            yield return null;
+        }
+
+        _mainCamera.transform.localPosition = _cameraInitialLocalPosition;
+    }
+
+    private IEnumerator EnlargePlant()
+    {
+        GameObject finalPlant = _plantStages[3];
+
+        if (finalPlant == null)
+        {
+            yield break;
+        }
+
+        Vector3 startScale = _plantInitialLocalScale;
+        Vector3 targetScale = _plantInitialLocalScale * _plantScaleMultiplier;
+
+        float elapsedTime = 0f;
+        float duration = Mathf.Max(0.1f, _plantScaleDuration);
+
+        while (elapsedTime < duration)
+        {
+            elapsedTime += Time.deltaTime;
+
+            float progress = Mathf.Clamp01(elapsedTime / duration);
+            float smoothProgress = Mathf.SmoothStep(0f, 1f, progress);
+
+            finalPlant.transform.localScale = Vector3.Lerp(
+                startScale,
+                targetScale,
+                smoothProgress
+            );
+
+            yield return null;
+        }
+
+        finalPlant.transform.localScale = targetScale;
     }
 
     // 成長段階に応じて植物の表示を切り替える
     private void UpdatePlantVisual()
     {
-        if (plantStages == null || plantStages.Length == 0) return;
+        if (_plantStages == null || _plantStages.Length == 0)
+        {
+            return;
+        }
 
         int stage = 0;
 
-        if (plantGrowth >= 90) stage = 3;
-        else if (plantGrowth >= 60) stage = 2;
-        else if (plantGrowth >= 30) stage = 1;
-
-        // 対応する段階の植物だけ表示する
-        for (int i = 0; i < plantStages.Length; i++)
+        if (_plantGrowth >= 90)
         {
-            if (plantStages[i] != null) plantStages[i].SetActive(i == stage);
+            stage = 3;
+        }
+        else if (_plantGrowth >= 60)
+        {
+            stage = 2;
+        }
+        else if (_plantGrowth >= 30)
+        {
+            stage = 1;
+        }
+
+        for (int i = 0; i < _plantStages.Length; i++)
+        {
+            if (_plantStages[i] != null)
+            {
+                _plantStages[i].SetActive(i == stage);
+            }
         }
 
         Debug.Log($"植物の成長段階：Stage{stage}");
     }
 
-    // ========================================
-    // パイプの接続判定
-    // ========================================
-
     private Direction GetOpenDirections(int row, int col)
     {
-        int rotation = Mathf.RoundToInt(tiles[row, col].localEulerAngles.y / 90f) % 4;
+        int rotation = Mathf.RoundToInt(_tiles[row, col].localEulerAngles.y / 90f) % 4;
 
-        if (pipeTypes[row, col] == PipeType.Straight)
-            return rotation % 2 == 0 ? Direction.East | Direction.West : Direction.North | Direction.South;
+        if (_pipeTypes[row, col] == PipeType.Straight)
+        {
+            return rotation % 2 == 0
+                ? Direction.East | Direction.West
+                : Direction.North | Direction.South;
+        }
 
         switch (rotation)
         {
@@ -277,25 +473,21 @@ public class PipePuzzleController : MonoBehaviour
         return Direction.None;
     }
 
-    // ========================================
-    // パズルの接続判定
-    // ========================================
-
     private void CheckPuzzleClear()
     {
-        if (!boardReady || isClear || isFlowing) return;
+        if (!_boardReady || _isClear || _isFlowing)
+        {
+            return;
+        }
 
-        // ここで経路（通水ルート）を受け取る
         if (!TryGetFlowPath(out List<Vector2Int> path))
         {
-            // 繋がっていないので水を引く
             ClearFlowVisual();
             return;
         }
 
-        if (playFlowOnClear)
+        if (_playFlowOnClear)
         {
-            // 経路に沿って水を流してからクリア
             StartCoroutine(PlayWaterFlow(path));
         }
         else
@@ -306,48 +498,68 @@ public class PipePuzzleController : MonoBehaviour
 
     /// <summary>
     /// スタート(0,0)の西口からゴール(2,2)の南口までの経路を幅優先探索で求める。
-    /// 到達できれば true を返し、path にタイルの並び（x=列, y=行）を順番に入れる。
-    /// 到達できなければ false。
     /// </summary>
     private bool TryGetFlowPath(out List<Vector2Int> path)
     {
         path = null;
-        if (!boardReady) return false;
+
+        if (!_boardReady)
+        {
+            return false;
+        }
 
         Direction[,] openings = new Direction[GridSize, GridSize];
 
         for (int row = 0; row < GridSize; row++)
+        {
             for (int col = 0; col < GridSize; col++)
+            {
                 openings[row, col] = GetOpenDirections(row, col);
+            }
+        }
 
-        // スタートの開口を確認
-        if (!HasOpening(openings[0, 0], Direction.West)) return false;
+        if (!HasOpening(openings[0, 0], Direction.West))
+        {
+            return false;
+        }
 
         bool[,] visited = new bool[GridSize, GridSize];
         Vector2Int[,] parents = new Vector2Int[GridSize, GridSize];
 
         for (int row = 0; row < GridSize; row++)
+        {
             for (int col = 0; col < GridSize; col++)
+            {
                 parents[row, col] = new Vector2Int(-1, -1);
+            }
+        }
 
         Queue<Vector2Int> queue = new Queue<Vector2Int>();
 
         queue.Enqueue(new Vector2Int(0, 0));
         visited[0, 0] = true;
 
-        Direction[] directions = { Direction.North, Direction.East, Direction.South, Direction.West };
+        Direction[] directions =
+        {
+            Direction.North,
+            Direction.East,
+            Direction.South,
+            Direction.West
+        };
+
         int[] rowOffsets = { -1, 0, 1, 0 };
         int[] colOffsets = { 0, 1, 0, -1 };
 
-        // 幅優先探索
         while (queue.Count > 0)
         {
             Vector2Int current = queue.Dequeue();
+
             int row = current.y;
             int col = current.x;
 
-            // ゴールに到達した
-            if (row == GridSize - 1 && col == GridSize - 1 && HasOpening(openings[row, col], Direction.South))
+            if (row == GridSize - 1 &&
+                col == GridSize - 1 &&
+                HasOpening(openings[row, col], Direction.South))
             {
                 path = BuildPathFromParents(parents, current);
                 return true;
@@ -358,13 +570,30 @@ public class PipePuzzleController : MonoBehaviour
                 int nextRow = row + rowOffsets[i];
                 int nextCol = col + colOffsets[i];
 
-                if (nextRow < 0 || nextRow >= GridSize || nextCol < 0 || nextCol >= GridSize) continue;
-                if (visited[nextRow, nextCol]) continue;
-                if (!HasOpening(openings[row, col], directions[i])) continue;
-                if (!HasOpening(openings[nextRow, nextCol], GetOpposite(directions[i]))) continue;
+                if (nextRow < 0 || nextRow >= GridSize ||
+                    nextCol < 0 || nextCol >= GridSize)
+                {
+                    continue;
+                }
+
+                if (visited[nextRow, nextCol])
+                {
+                    continue;
+                }
+
+                if (!HasOpening(openings[row, col], directions[i]))
+                {
+                    continue;
+                }
+
+                if (!HasOpening(openings[nextRow, nextCol], GetOpposite(directions[i])))
+                {
+                    continue;
+                }
 
                 visited[nextRow, nextCol] = true;
                 parents[nextRow, nextCol] = new Vector2Int(col, row);
+
                 queue.Enqueue(new Vector2Int(nextCol, nextRow));
             }
         }
@@ -372,32 +601,34 @@ public class PipePuzzleController : MonoBehaviour
         return false;
     }
 
-    // 親配列からゴール→スタートをたどり、スタート→ゴールの順に並べ直す
+    // 親配列から経路を作成する
     private List<Vector2Int> BuildPathFromParents(Vector2Int[,] parents, Vector2Int goal)
     {
         List<Vector2Int> path = new List<Vector2Int>();
+
         Vector2Int cursor = goal;
         path.Add(cursor);
 
-        // 念のため無限ループ防止
         int guard = GridSize * GridSize + 1;
+
         while ((cursor.x != 0 || cursor.y != 0) && guard-- > 0)
         {
             Vector2Int parent = parents[cursor.y, cursor.x];
-            if (parent.x < 0 || parent.y < 0) break;
+
+            if (parent.x < 0 || parent.y < 0)
+            {
+                break;
+            }
+
             path.Add(parent);
             cursor = parent;
         }
 
         path.Reverse();
+
         return path;
     }
 
-    // ========================================
-    // 通水演出
-    // ========================================
-
-    // 経路に沿って水を流す
     private IEnumerator PlayWaterFlow(List<Vector2Int> path)
     {
         if (path == null || path.Count < 2)
@@ -406,41 +637,39 @@ public class PipePuzzleController : MonoBehaviour
             yield break;
         }
 
-        isFlowing = true;
+        _isFlowing = true;
 
-        // 水嵩をリセットして水流オブジェクトを用意
         ClearTileFill();
         EnsureFlowObjects();
 
-        // 経路のローカル座標を作る（ラインは盤面の子なのでローカル空間で扱う）
         int count = path.Count;
         Vector3[] points = new Vector3[count];
 
         for (int i = 0; i < count; i++)
         {
             Transform tile = GetTile(path[i]);
-            points[i] = tile != null ? transform.InverseTransformPoint(tile.position) : Vector3.zero;
+
+            points[i] = tile != null
+                ? transform.InverseTransformPoint(tile.position)
+                : Vector3.zero;
         }
 
-        // スタート地点に水滴を置く
-        waterHead.SetActive(true);
-        waterHead.transform.localPosition = points[0];
+        _waterHead.SetActive(true);
+        _waterHead.transform.localPosition = points[0];
 
-        waterLine.enabled = true;
-        waterLine.positionCount = 1;
-        waterLine.SetPosition(0, points[0]);
+        _waterLine.enabled = true;
+        _waterLine.positionCount = 1;
+        _waterLine.SetPosition(0, points[0]);
 
-        // スタートタイルは最初から満水
         SetTileFill(path[0], 1f);
 
-        float speed = Mathf.Max(0.05f, waterFlowSpeed);
+        float speed = Mathf.Max(0.05f, _waterFlowSpeed);
 
         for (int i = 1; i < count; i++)
         {
             Vector3 from = points[i - 1];
             Vector3 to = points[i];
 
-            // 距離に応じて時間を決める（どの区間でも同じ速さで流れる）
             float distance = Vector3.Distance(from, to);
             float duration = Mathf.Max(0.0001f, distance / speed);
             float elapsed = 0f;
@@ -448,56 +677,64 @@ public class PipePuzzleController : MonoBehaviour
             while (elapsed < duration)
             {
                 elapsed += Time.deltaTime;
+
                 float t = Mathf.Clamp01(elapsed / duration);
 
-                // 水滴を移動
                 Vector3 head = Vector3.Lerp(from, to, t);
-                waterHead.transform.localPosition = head;
 
-                // 通過済みの区間＋先端までをラインで描く
-                waterLine.positionCount = i + 1;
-                waterLine.SetPosition(i, head);
+                _waterHead.transform.localPosition = head;
 
-                // 到着しつつあるタイルを満たしていく
+                _waterLine.positionCount = i + 1;
+                _waterLine.SetPosition(i, head);
+
                 SetTileFill(path[i], t);
 
                 yield return null;
             }
 
-            // 区間の終点を確定
             SetTileFill(path[i], 1f);
-            waterLine.SetPosition(i, to);
+            _waterLine.SetPosition(i, to);
         }
 
-        waterHead.SetActive(false);
+        _waterHead.SetActive(false);
 
-        // 少しだけ水を残してからクリア表示
-        if (waterFlowHold > 0f) yield return new WaitForSeconds(waterFlowHold);
+        if (_waterFlowHold > 0f)
+        {
+            yield return new WaitForSeconds(_waterFlowHold);
+        }
 
-        isFlowing = false;
+        _isFlowing = false;
+
         PuzzleClear();
     }
 
     // クリア処理
     private void PuzzleClear()
     {
-        isClear = true;
-        Debug.Log($"CLEAR！クリアまでの回転数：{rotationCount}回");
+        _isClear = true;
+
+        Debug.Log($"CLEAR！クリアまでの回転数：{_rotationCount}回");
     }
 
-    // 経路のタイル（x=列, y=行）を取得
+    // 経路のタイルを取得
     private Transform GetTile(Vector2Int cell)
     {
-        if (cell.x < 0 || cell.x >= GridSize || cell.y < 0 || cell.y >= GridSize) return null;
-        return tiles[cell.y, cell.x];
+        if (cell.x < 0 || cell.x >= GridSize ||
+            cell.y < 0 || cell.y >= GridSize)
+        {
+            return null;
+        }
+
+        return _tiles[cell.y, cell.x];
     }
 
-    // 各タイルの Renderer と元の色を記憶しておく
+    // 各タイルのRendererと元の色を記憶する
     private void CacheTileRenderers()
     {
-        tileRenderers = new List<Renderer>[GridSize, GridSize];
-        tileBaseColors = new List<Color>[GridSize, GridSize];
-        propertyBlock = new MaterialPropertyBlock();
+        _tileRenderers = new List<Renderer>[GridSize, GridSize];
+        _tileBaseColors = new List<Color>[GridSize, GridSize];
+
+        _propertyBlock = new MaterialPropertyBlock();
 
         for (int row = 0; row < GridSize; row++)
         {
@@ -506,20 +743,24 @@ public class PipePuzzleController : MonoBehaviour
                 List<Renderer> renderers = new List<Renderer>();
                 List<Color> colors = new List<Color>();
 
-                Transform tile = tiles[row, col];
+                Transform tile = _tiles[row, col];
 
                 if (tile != null)
                 {
                     foreach (Renderer renderer in tile.GetComponentsInChildren<Renderer>(true))
                     {
-                        if (renderer == null) continue;
+                        if (renderer == null)
+                        {
+                            continue;
+                        }
+
                         renderers.Add(renderer);
                         colors.Add(GetMaterialColor(renderer));
                     }
                 }
 
-                tileRenderers[row, col] = renderers;
-                tileBaseColors[row, col] = colors;
+                _tileRenderers[row, col] = renderers;
+                _tileBaseColors[row, col] = colors;
             }
         }
     }
@@ -528,58 +769,86 @@ public class PipePuzzleController : MonoBehaviour
     private static Color GetMaterialColor(Renderer renderer)
     {
         Material material = renderer.sharedMaterial;
-        if (material == null) return Color.white;
-        if (material.HasProperty(BaseColorId)) return material.GetColor(BaseColorId);
-        if (material.HasProperty(ColorId)) return material.GetColor(ColorId);
+
+        if (material == null)
+        {
+            return Color.white;
+        }
+
+        if (material.HasProperty(BaseColorId))
+        {
+            return material.GetColor(BaseColorId);
+        }
+
+        if (material.HasProperty(ColorId))
+        {
+            return material.GetColor(ColorId);
+        }
+
         return Color.white;
     }
 
-    // 水滴・水流ラインを必要になった時点で作る
+    // 水滴・水流ラインを作成する
     private void EnsureFlowObjects()
     {
-        if (propertyBlock == null) propertyBlock = new MaterialPropertyBlock();
-
-        // 水滴
-        if (waterHead == null)
+        if (_propertyBlock == null)
         {
-            waterHead = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            waterHead.name = "WaterHead";
-            waterHead.transform.SetParent(transform, false);
-            waterHead.transform.localScale = Vector3.one * Mathf.Max(0.01f, waterHeadSize);
-
-            // クリックのレイキャストに引っかからないようにコライダーを消す
-            Collider collider = waterHead.GetComponent<Collider>();
-            if (collider != null) Destroy(collider);
-
-            Material headMaterial = CreateFlowMaterial(waterColor);
-            Renderer headRenderer = waterHead.GetComponent<Renderer>();
-            if (headRenderer != null && headMaterial != null) headRenderer.sharedMaterial = headMaterial;
-
-            waterHead.SetActive(false);
+            _propertyBlock = new MaterialPropertyBlock();
         }
 
-        // 水流ライン
-        if (waterLine == null)
+        if (_waterHead == null)
+        {
+            _waterHead = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            _waterHead.name = "WaterHead";
+
+            _waterHead.transform.SetParent(transform, false);
+            _waterHead.transform.localScale = Vector3.one * Mathf.Max(0.01f, _waterHeadSize);
+
+            Collider collider = _waterHead.GetComponent<Collider>();
+
+            if (collider != null)
+            {
+                Destroy(collider);
+            }
+
+            Material headMaterial = CreateFlowMaterial(_waterColor);
+
+            Renderer headRenderer = _waterHead.GetComponent<Renderer>();
+
+            if (headRenderer != null && headMaterial != null)
+            {
+                headRenderer.sharedMaterial = headMaterial;
+            }
+
+            _waterHead.SetActive(false);
+        }
+
+        if (_waterLine == null)
         {
             GameObject lineObject = new GameObject("WaterLine");
+
             lineObject.transform.SetParent(transform, false);
 
-            waterLine = lineObject.AddComponent<LineRenderer>();
-            waterLine.useWorldSpace = false;
-            waterLine.widthMultiplier = Mathf.Max(0.001f, waterLineWidth);
-            waterLine.numCapVertices = 4;
-            waterLine.numCornerVertices = 4;
-            waterLine.alignment = LineAlignment.View;
-            waterLine.textureMode = LineTextureMode.Stretch;
-            waterLine.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            waterLine.receiveShadows = false;
-            waterLine.startColor = waterColor;
-            waterLine.endColor = new Color(waterColor.r, waterColor.g, waterColor.b, 0f);
-            waterLine.positionCount = 0;
-            waterLine.enabled = false;
+            _waterLine = lineObject.AddComponent<LineRenderer>();
+            _waterLine.useWorldSpace = false;
+            _waterLine.widthMultiplier = Mathf.Max(0.001f, _waterLineWidth);
+            _waterLine.numCapVertices = 4;
+            _waterLine.numCornerVertices = 4;
+            _waterLine.alignment = LineAlignment.View;
+            _waterLine.textureMode = LineTextureMode.Stretch;
+            _waterLine.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            _waterLine.receiveShadows = false;
+            _waterLine.startColor = _waterColor;
+            _waterLine.endColor = new Color(_waterColor.r, _waterColor.g, _waterColor.b, 0f);
+            _waterLine.positionCount = 0;
+            _waterLine.enabled = false;
 
-            Material lineMaterial = CreateFlowMaterial(waterColor);
-            if (lineMaterial != null) waterLine.material = lineMaterial;
+            Material lineMaterial = CreateFlowMaterial(_waterColor);
+
+            if (lineMaterial != null)
+            {
+                _waterLine.material = lineMaterial;
+            }
         }
     }
 
@@ -587,57 +856,94 @@ public class PipePuzzleController : MonoBehaviour
     private static Material CreateFlowMaterial(Color color)
     {
         Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
-        if (shader == null) shader = Shader.Find("Sprites/Default");
-        if (shader == null) shader = Shader.Find("Unlit/Color");
-        if (shader == null) return null;
+
+        if (shader == null)
+        {
+            shader = Shader.Find("Sprites/Default");
+        }
+
+        if (shader == null)
+        {
+            shader = Shader.Find("Unlit/Color");
+        }
+
+        if (shader == null)
+        {
+            return null;
+        }
 
         Material material = new Material(shader);
         material.name = "RuntimeWaterFlow";
 
-        if (material.HasProperty(BaseColorId)) material.SetColor(BaseColorId, color);
-        if (material.HasProperty(ColorId)) material.SetColor(ColorId, color);
+        if (material.HasProperty(BaseColorId))
+        {
+            material.SetColor(BaseColorId, color);
+        }
+
+        if (material.HasProperty(ColorId))
+        {
+            material.SetColor(ColorId, color);
+        }
 
         return material;
     }
 
-    // 指定タイルの水嵩を 0～1 で設定する
+    // 指定タイルの水嵩を設定する
     private void SetTileFill(Vector2Int cell, float fill)
     {
-        if (cell.x < 0 || cell.x >= GridSize || cell.y < 0 || cell.y >= GridSize) return;
-        if (tileRenderers == null || propertyBlock == null) return;
+        if (cell.x < 0 || cell.x >= GridSize ||
+            cell.y < 0 || cell.y >= GridSize)
+        {
+            return;
+        }
 
-        List<Renderer> renderers = tileRenderers[cell.y, cell.x];
-        List<Color> baseColors = tileBaseColors[cell.y, cell.x];
+        if (_tileRenderers == null || _propertyBlock == null)
+        {
+            return;
+        }
 
-        if (renderers == null || baseColors == null) return;
+        List<Renderer> renderers = _tileRenderers[cell.y, cell.x];
+        List<Color> baseColors = _tileBaseColors[cell.y, cell.x];
+
+        if (renderers == null || baseColors == null)
+        {
+            return;
+        }
 
         float t = Mathf.Clamp01(fill);
 
         for (int i = 0; i < renderers.Count; i++)
         {
             Renderer renderer = renderers[i];
-            if (renderer == null) continue;
 
-            Color tinted = Color.Lerp(baseColors[i], waterColor, t * waterTint);
+            if (renderer == null)
+            {
+                continue;
+            }
 
-            propertyBlock.Clear();
+            Color tinted = Color.Lerp(baseColors[i], _waterColor, t * _waterTint);
 
-            // 自作シェーダーで水面を上げたい場合は _Fill を使用（無いマテリアルでは無視される）
-            propertyBlock.SetFloat(FillId, t);
-            propertyBlock.SetColor(BaseColorId, tinted);
-            propertyBlock.SetColor(ColorId, tinted);
-            propertyBlock.SetColor(EmissionColorId, waterEmissionColor * (waterEmissionIntensity * t));
+            _propertyBlock.Clear();
 
-            renderer.SetPropertyBlock(propertyBlock);
+            _propertyBlock.SetFloat(FillId, t);
+            _propertyBlock.SetColor(BaseColorId, tinted);
+            _propertyBlock.SetColor(ColorId, tinted);
+            _propertyBlock.SetColor(EmissionColorId, _waterEmissionColor * (_waterEmissionIntensity * t));
+
+            renderer.SetPropertyBlock(_propertyBlock);
         }
     }
 
-    // 全タイルの水嵩を 0 に戻す
+    // 全タイルの水嵩を0に戻す
     private void ClearTileFill()
     {
         for (int row = 0; row < GridSize; row++)
+        {
             for (int col = 0; col < GridSize; col++)
+            {
                 SetTileFill(new Vector2Int(col, row), 0f);
+            }
+        }
     }
 
     // 水の表示をすべて消す
@@ -645,24 +951,25 @@ public class PipePuzzleController : MonoBehaviour
     {
         ClearTileFill();
 
-        if (waterLine != null)
+        if (_waterLine != null)
         {
-            waterLine.positionCount = 0;
-            waterLine.enabled = false;
+            _waterLine.positionCount = 0;
+            _waterLine.enabled = false;
         }
 
-        if (waterHead != null) waterHead.SetActive(false);
+        if (_waterHead != null)
+        {
+            _waterHead.SetActive(false);
+        }
     }
-
-    // ========================================
-    // 画面表示
-    // ========================================
 
     private void OnGUI()
     {
         GUIStyle labelStyle = new GUIStyle(GUI.skin.label);
+
         labelStyle.fontSize = 18;
         labelStyle.normal.textColor = Color.white;
+
         GUI.Label(new Rect(20, 15, 280, 30), "植物の成長度", labelStyle);
 
         Color originalColor = GUI.color;
@@ -677,30 +984,56 @@ public class PipePuzzleController : MonoBehaviour
 
         // 成長度に応じてバーの色を変更
         Color barColor;
-        if (plantGrowth >= 90)
+
+        if (_plantGrowth >= 90)
+        {
             barColor = new Color(1f, 0.1f, 0.1f, 1f);
-        else if (plantGrowth >= 60)
+        }
+        else if (_plantGrowth >= 60)
+        {
             barColor = new Color(1f, 0.45f, 0.05f, 1f);
-        else if (plantGrowth >= 30)
+        }
+        else if (_plantGrowth >= 30)
+        {
             barColor = new Color(1f, 0.9f, 0.1f, 1f);
+        }
         else
+        {
             barColor = new Color(0.2f, 1f, 0.55f, 1f);
+        }
+
+        // 成長度90%以上の場合は透明度を変化させる
+        barColor.a = _blinkAlpha;
 
         // 成長度に応じてバーを伸ばす
-        float progress = Mathf.Clamp01(plantGrowth / 100f);
+        float progress = Mathf.Clamp01(_plantGrowth / 100f);
+
         GUI.color = barColor;
-        GUI.DrawTexture(new Rect(22, 50, Mathf.Lerp(0f, 260f, progress), 24), Texture2D.whiteTexture);
+
+        GUI.DrawTexture(
+            new Rect(22, 50, Mathf.Lerp(0f, 260f, progress), 24),
+            Texture2D.whiteTexture
+        );
 
         GUI.color = originalColor;
 
         // クリア表示
-        if (!isClear) return;
+        if (!_isClear)
+        {
+            return;
+        }
 
         GUIStyle clearStyle = new GUIStyle(GUI.skin.label);
+
         clearStyle.fontSize = 48;
         clearStyle.fontStyle = FontStyle.Bold;
         clearStyle.alignment = TextAnchor.MiddleCenter;
         clearStyle.normal.textColor = Color.green;
-        GUI.Label(new Rect(0, Screen.height / 2f - 40f, Screen.width, 80f), "CLEAR!", clearStyle);
+
+        GUI.Label(
+            new Rect(0, Screen.height / 2f - 40f, Screen.width, 80f),
+            "CLEAR!",
+            clearStyle
+        );
     }
 }
